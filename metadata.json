@@ -1,0 +1,12 @@
+{
+  "name": "Ask IA",
+  "description": "Inteligência artificial completa inspirada no ChatGPT com chat em tempo real, raciocínio avançado, pesquisa na web, visão e voz.",
+  "requestFramePermissions": [
+    "clipboard-read",
+    "clipboard-write",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
