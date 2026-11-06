@@ -19,13 +19,19 @@ import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { SettingsModal } from './components/SettingsModal';
 import { ImageViewerModal } from './components/ImageViewerModal';
+import { LoginModal } from './components/LoginModal';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { db } from './lib/firebase';
+import { doc, setDoc, getDocs, collection, deleteDoc } from 'firebase/firestore';
 
-export default function App() {
+function MainApp() {
+  const { user } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>(() => loadStoredConversations());
   const [currentId, setCurrentId] = useState<string | null>(() => loadCurrentConversationId());
   const [settings, setSettings] = useState<UserSettings>(() => loadStoredSettings());
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ url: string; prompt?: string } | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -41,10 +47,55 @@ export default function App() {
     }
   }, [settings.theme]);
 
-  // Save conversations to localStorage on change
+  // Load user conversations from Firestore when logged in
+  useEffect(() => {
+    if (!user) return;
+    const fetchRemoteChats = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, 'users', user.uid, 'conversations'));
+        if (!querySnapshot.empty) {
+          const remoteChats: Conversation[] = [];
+          querySnapshot.forEach((d) => {
+            const data = d.data() as Conversation;
+            remoteChats.push(data);
+          });
+          if (remoteChats.length > 0) {
+            setConversations((prev) => {
+              const chatMap = new Map<string, Conversation>();
+              prev.forEach((c) => chatMap.set(c.id, c));
+              remoteChats.forEach((c) => chatMap.set(c.id, c));
+              return Array.from(chatMap.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Notice loading cloud chats:', err);
+      }
+    };
+    fetchRemoteChats();
+  }, [user]);
+
+  // Save conversations to localStorage and Firestore
   useEffect(() => {
     saveStoredConversations(conversations);
-  }, [conversations]);
+    if (user && conversations.length > 0) {
+      conversations.forEach((conv) => {
+        setDoc(
+          doc(db, 'users', user.uid, 'conversations', conv.id),
+          {
+            id: conv.id,
+            userId: user.uid,
+            title: conv.title || 'Conversa',
+            model: conv.model || 'gemini-3.8-flash',
+            pinned: Boolean(conv.pinned),
+            createdAt: conv.createdAt,
+            updatedAt: conv.updatedAt,
+          },
+          { merge: true }
+        ).catch(() => {});
+      });
+    }
+  }, [conversations, user]);
 
   // Save current conversation ID to localStorage
   useEffect(() => {
@@ -129,6 +180,9 @@ export default function App() {
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (currentId === id) {
       setCurrentId(null);
+    }
+    if (user) {
+      deleteDoc(doc(db, 'users', user.uid, 'conversations', id)).catch(() => {});
     }
   };
 
@@ -528,6 +582,7 @@ export default function App() {
         onRenameConversation={handleRenameConversation}
         onTogglePinConversation={handleTogglePinConversation}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
         isOpen={isSidebarOpen}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         settings={settings}
@@ -542,6 +597,7 @@ export default function App() {
         onSelectModel={handleSelectModel}
         onNewConversation={handleNewConversation}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
         isSidebarOpen={isSidebarOpen}
         settings={settings}
         onToggleTheme={handleToggleTheme}
@@ -558,6 +614,12 @@ export default function App() {
         onClearAllConversations={handleClearAllConversations}
       />
 
+      {/* Login with Google Modal */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+      />
+
       {/* Fullscreen Image Preview Modal */}
       <ImageViewerModal
         imageUrl={viewingImage?.url || null}
@@ -565,5 +627,13 @@ export default function App() {
         onClose={() => setViewingImage(null)}
       />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }
